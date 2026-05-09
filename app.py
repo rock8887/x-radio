@@ -53,7 +53,7 @@ if st.button("开始朗读"):
     for user in st.session_state.users:
 
         feed = feedparser.parse(
-            f"https://nitter.net/{user}/rss"
+            f"https://nitter.poast.org/{user}/rss"
         )
 
         for entry in feed.entries:
