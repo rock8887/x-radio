@@ -1,30 +1,26 @@
 import streamlit as st
-import feedparser
-from datetime import datetime, timedelta
+from playwright.sync_api import sync_playwright
 import edge_tts
 import asyncio
 import tempfile
 
 st.set_page_config(layout="wide")
-st.title("X 语音电台")
+
+st.title("X 语音电台（Playwright版）")
 
 if "users" not in st.session_state:
-    st.session_state.users = ["elonmusk", "sama"]
+    st.session_state.users = ["elonmusk"]
 
 with st.sidebar:
 
-    st.header("用户列表")
+    st.header("用户")
 
-    new_user = st.text_input("添加用户（不用@）")
+    new_user = st.text_input("添加用户")
 
-    if st.button("添加用户"):
-        if new_user:
-            st.session_state.users.append(new_user)
+    if st.button("添加") and new_user:
+        st.session_state.users.append(new_user)
 
-    for u in st.session_state.users:
-        st.write(u)
-
-    hours = st.number_input("最近多少小时", 1, 48, 6)
+    st.write(st.session_state.users)
 
     voice = st.selectbox(
         "语音",
@@ -34,49 +30,88 @@ with st.sidebar:
         ]
     )
 
-async def make_audio(text, voice):
-    tts = edge_tts.Communicate(text, voice=voice)
+# ===== Playwright 抓取 =====
+def get_posts(users):
 
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+    posts = []
+
+    with sync_playwright() as p:
+
+        browser = p.chromium.launch(
+            headless=True
+        )
+
+        page = browser.new_page()
+
+        for user in users:
+
+            url = f"https://x.com/{user}"
+
+            try:
+                page.goto(url, timeout=60000)
+
+                page.wait_for_timeout(5000)
+
+                articles = page.locator("article").all()
+
+                for a in articles[:5]:
+
+                    text = a.inner_text()
+
+                    if len(text) > 20:
+                        posts.append(
+                            f"{user}: {text}"
+                        )
+
+            except Exception as e:
+                posts.append(
+                    f"{user}: 获取失败"
+                )
+
+        browser.close()
+
+    return posts
+
+# ===== TTS =====
+async def make_audio(text, voice):
+
+    tts = edge_tts.Communicate(
+        text,
+        voice=voice
+    )
+
+    tmp = tempfile.NamedTemporaryFile(
+        delete=False,
+        suffix=".mp3"
+    )
 
     await tts.save(tmp.name)
 
     return tmp.name
 
+# ===== 主逻辑 =====
 if st.button("开始朗读"):
 
-    now = datetime.utcnow()
-    cutoff = now - timedelta(hours=hours)
+    with st.spinner("正在抓取 X 内容..."):
 
-    posts = []
-
-    for user in st.session_state.users:
-
-        feed = feedparser.parse(
-            f"https://nitter.space/{user}/rss"
+        posts = get_posts(
+            st.session_state.users
         )
 
-        for entry in feed.entries:
-
-            published = datetime(*entry.published_parsed[:6])
-
-            if published > cutoff:
-                posts.append(
-                    f"{user}: {entry.title}"
-                )
-
     if posts:
+
+        st.subheader("内容")
 
         for p in posts:
             st.write(p)
 
-        text = "。".join(posts[:20])
+        text = "。".join(posts[:10])
 
         audio = asyncio.run(
-            make_audio(text[:1000], voice)
+            make_audio(text[:1500], voice)
         )
 
         st.audio(audio)
 
     else:
-        st.warning("没有新内容")
+        st.warning("没有抓到内容")
